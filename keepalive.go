@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/go-ping/ping"
 	"log"
 	"os/exec"
+	"sync"
 	"time"
 )
 
@@ -30,9 +32,14 @@ func (w *WireGuardConnection) isConnected() bool {
 }
 
 // 连接状态从连接转换到非连接时需要重启一下WireGuard服务
-func (w *WireGuardConnection) onStatusDisconnected() {
+func (w *WireGuardConnection) onStatusDisconnected(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	for {
 		select {
+		case <-ctx.Done():
+			log.Printf("context done")
+			return
 		case status, ok := <-w.statusChannel:
 			if !ok {
 				log.Println("status channel closed")
@@ -53,11 +60,15 @@ func (w *WireGuardConnection) onStatusDisconnected() {
 }
 
 // 循环检查WireGuard服务的连接性
-func (w *WireGuardConnection) statusCheckServer() {
+func (w *WireGuardConnection) statusCheckServer(ctx context.Context, wg *sync.WaitGroup) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	defer wg.Done()
 	for {
 		select {
+		case <-ctx.Done():
+			log.Println("context done")
+			return
 		case <-ticker.C:
 			err := w.ping(w.address)
 			if err != nil {
@@ -105,7 +116,7 @@ func (w *WireGuardConnection) restartWireGuard(interfaceName string) error {
 	stopCmd := exec.Command("wg-quick", "down", interfaceName)
 	err := stopCmd.Run()
 	if err != nil {
-		return err
+		log.Println("stopping wireguard interface: ", err)
 	}
 	log.Println("stop wireguard")
 
